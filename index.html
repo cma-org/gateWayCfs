@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invoice Factoring Quote</title>
+  <style>
+    body { font-family: Arial, sans-serif; background-color: #f4f7f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+    .container { background-color: #ffffff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); max-width: 500px; width: 100%; text-align: center; }
+    h1 { color: #333; }
+    label { display: block; text-align: left; margin-top: 1em; font-weight: bold; }
+    input[type="text"], input[type="email"], input[type="file"] { width: 90%; padding: 0.8em; margin-top: 0.5em; border: 1px solid #ccc; border-radius: 4px; }
+    button { width: 100%; padding: 1em; margin-top: 1.5em; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 1.1em; cursor: pointer; }
+    button:hover { background-color: #0056b3; }
+    #loading-message { display: none; color: #555; margin-top: 1em; }
+
+    /* result box hidden by default */
+    #result-box {
+      display: none;
+      margin-top: 2em;
+      padding: 1.5em;
+      background-color: #e9f5ff;
+      border: 1px solid #cce5ff;
+      border-radius: 4px;
+      text-align: left;
+    }
+    .err { color: #e74c3c; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Invoice Factoring Quote</h1>
+
+  <form id="quote-form" action="https://growthhackers3375.app.n8n.cloud/webhook/46b71af4-ad72-4574-8663-32abb6e2fffd">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" required>
+
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required>
+
+    <label for="invoice_upload">Upload Invoice (PDF/Image)</label>
+    <input type="file" id="Invoice_Upload" name="Invoice_Upload" accept=".pdf,.jpg,.jpeg,.png" required>
+
+    <button type="submit">Get Your Quote</button>
+  </form>
+
+  <div id="loading-message">Checking your customers credit rating...This might take a moment.</div>
+  <div id="result-box"></div>
+</div>
+
+<script>
+  const WEBHOOK_URL = 'https://growthhackers3375.app.n8n.cloud/webhook/46b71af4-ad72-4574-8663-32abb6e2fffd';
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, m => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+  }
+
+  function renderResult(data) {
+    const company = data.company_name || 'N/A';
+    const addr = data.company_address || 'Not found';
+    const creditScore = (data.credit_score ?? 'N/A');
+    const creditStatus = data.credit_status || 'Unapproved';
+    const creditOk = !!data.credit_ok;
+    const message = data.message || '';
+
+    // If pipeline ever sets error true
+    if (data.error) {
+      return `
+        <h3 class="err">⚠️ Upload Error</h3>
+        <p><strong>${esc(message || 'Unknown error')}</strong></p>
+        <p style="color:#666;font-size:14px;">Please upload a clear invoice (PDF or image).</p>
+      `;
+    }
+
+    // Base section always shown
+    let html = `
+      <h3>Your Quote Details:</h3>
+      <p><strong>Company:</strong> ${esc(company)}</p>
+      <p><strong>Address:</strong> ${esc(addr)}</p>
+      <p><strong>Credit Score:</strong> ${esc(creditScore)}</p>
+      <p><strong>Credit Status:</strong> ${esc(creditStatus)}</p>
+    `;
+
+    // If Match & Append couldn't find the customer OR credit not OK
+    if (!creditOk || !data.quote || !data.quote.formatted) {
+      html += `
+        <hr>
+        <p class="err"><strong>${esc(message || 'Credit score of the company is not meeting the standards.')}</strong></p>
+      `;
+      return html;
+    }
+
+    // Quote section (only when approved)
+    const f = data.quote.formatted;
+    html += `
+      <hr>
+      <p><strong>Invoice Amount:</strong> ${esc(f.invoice_amount || 'N/A')}</p>
+      <p><strong>Advance Rate:</strong> ${esc(f.advance_rate || 'N/A')}</p>
+      <p><strong>Discount Rate (Commission):</strong> ${esc(f.discount_rate || 'N/A')}</p>
+      <hr>
+      <p><strong>Advance:</strong> ${esc(f.advance || 'N/A')}</p>
+      <p><strong>Balance due upon payment-Reserve:</strong> ${esc(f.reserve || 'N/A')}</p>
+      <p><strong>Discount:</strong> ${esc(f.discount || 'N/A')}</p>
+      <p><strong>Total Amount Received:</strong> ${esc(f.total_received || 'N/A')}</p>
+      <hr>
+      <p>An email with these details has also been sent for your records.
+      Disclaimer - The proposed discount rate assumes payment within 30 days of the invoice date.
+      All offers are subject to formal underwriting by Gateway Commercial Finance, LLC.
+      The teaser rate is based on a minimum monthly factored volume equal to 3× the uploaded invoice amount.</p>
+    `;
+    return html;
+  }
+
+  document.getElementById('quote-form').addEventListener('submit', async function(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const loadingMessage = document.getElementById('loading-message');
+    const resultBox = document.getElementById('result-box');
+
+    loadingMessage.style.display = 'block';
+    resultBox.style.display = 'none';
+    resultBox.innerHTML = '';
+
+    try {
+      const response = await fetch(WEBHOOK_URL, { method: 'POST', body: formData });
+
+      // If server returns non-JSON sometimes, this prevents crashes
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { data = { error: true, message: 'Invalid response from server.' }; }
+
+      loadingMessage.style.display = 'none';
+      resultBox.innerHTML = renderResult(data);
+      resultBox.style.display = 'block';
+    } catch (error) {
+      loadingMessage.style.display = 'none';
+      resultBox.innerHTML = '<p class="err">An error occurred. Please try again later.</p>';
+      resultBox.style.display = 'block';
+      console.error('Error:', error);
+    }
+  });
+</script>
+
+</body>
+</html>
